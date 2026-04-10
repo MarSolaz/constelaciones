@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Constelaciones fugaces</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: #050a19;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        canvas {
+            display: block;
+        }
+
+        /* Botón Minimalista */
+        #audio-ctrl {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: transparent;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            color: rgba(255, 255, 255, 0.6);
+            padding: 8px 12px;
+            cursor: pointer;
+            font-size: 12px;
+            letter-spacing: 1px;
+            transition: all 0.3s;
+            border-radius: 4px;
+            z-index: 10;
+        }
+
+        #audio-ctrl:hover {
+            border-color: rgba(255, 255, 255, 0.8);
+            color: white;
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        #ui {
+            position: absolute;
+            bottom: 20px;
+            width: 100%;
+            text-align: center;
+            color: rgba(255, 255, 255, 0.3);
+            pointer-events: none;
+            font-size: 13px;
+        }
+    </style>
+</head>
+<body>
+
+    <button id="audio-ctrl">SONIDO: OFF</button>
+    <div id="ui">Tocá las estrellas para crear constelaciones | cada trazo dura 30s | El cielo cambia cada 1m</div>
+    <canvas id="sky"></canvas>
+
+    <audio id="musica" loop>
+        <source src="grillo.mp3" type="audio/mpeg">
+    </audio>
+
+    <script>
+        const canvas = document.getElementById('sky');
+        const ctx = canvas.getContext('2d');
+        const musica = document.getElementById('musica');
+        const btnAudio = document.getElementById('audio-ctrl');
+
+        let stars = [];
+        let connections = [];
+        let selectedStar = null;
+        let audioIniciado = false;
+
+        const STAR_COUNT = 111;
+        const LINE_LIFESPAN = 30000;
+        const STAR_REFRESH_RATE = 60000;
+
+        // --- LÓGICA DE AUDIO ---
+        function toggleAudio() {
+            if (musica.paused) {
+                musica.play().catch(e => console.log("Esperando interacción..."));
+                btnAudio.innerText = "SONIDO: ON";
+            } else {
+                musica.pause();
+                btnAudio.innerText = "SONIDO: OFF";
+            }
+        }
+
+        btnAudio.addEventListener('click', toggleAudio);
+
+        // --- CLASE ESTRELLA ---
+        class Star {
+            constructor() {
+                this.reset();
+                this.opacity = Math.random();
+                this.fadeSpeed = 0.005 + Math.random() * 0.008;
+                this.state = 'visible';
+                this.lastChange = Date.now();
+                // Intensidad del halo única para cada estrella (entre 5 y 15)
+                this.haloIntensity = Math.random() * 10 + 5; 
+            }
+
+            reset() {
+                this.x = Math.random() * canvas.width;
+                this.y = Math.random() * canvas.height;
+                // Tamaño base variable
+                this.size = Math.random() * 2 + 0.5;
+                this.lastChange = Date.now();
+                this.state = 'fadingIn'; // Empezar apareciendo
+                this.opacity = 0;
+            }
+
+            update() {
+                let now = Date.now();
+                // Decidir si empieza a desaparecer cada minuto
+                if (now - this.lastChange > STAR_REFRESH_RATE) {
+                    if (this.state === 'visible') this.state = 'fadingOut';
+                }
+
+                if (this.state === 'fadingOut') {
+                    this.opacity -= this.fadeSpeed;
+                    if (this.opacity <= 0) {
+                        this.reset();
+                    }
+                } else if (this.state === 'fadingIn') {
+                    this.opacity += this.fadeSpeed;
+                    if (this.opacity >= 1) {
+                        this.opacity = 1;
+                        this.state = 'visible';
+                    }
+                }
+            }
+
+            draw() {
+                ctx.save(); // Guardar el estado del contexto
+
+                // Configurar el halo sutil
+                ctx.shadowBlur = this.haloIntensity;
+                ctx.shadowColor = `rgba(255, 255, 255, ${this.opacity})`;
+                
+                // Dibujar el punto central de la estrella
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                ctx.fillStyle = `rgba(255, 255, 255, ${this.opacity})`;
+                ctx.fill();
+
+                ctx.restore(); // Restaurar el contexto (quitar la sombra para el resto)
+            }
+        }
+
+        function init() {
+            resize();
+            for (let i = 0; i < STAR_COUNT; i++) {
+                stars.push(new Star());
+            }
+            animate();
+        }
+
+        function resize() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            // Opcional: Redistribuir estrellas al redimensionar
+            stars.forEach(s => s.reset());
+        }
+
+        window.addEventListener('resize', resize);
+
+        function animate() {
+            // Fondo oscuro profundo
+            ctx.fillStyle = '#050a19';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            let now = Date.now();
+
+            // Líneas (Conexiones) - Mantienen su estilo limpio
+            ctx.shadowBlur = 0; // Asegurar que no hay sombra aquí
+            for (let i = connections.length - 1; i >= 0; i--) {
+                let c = connections[i];
+                let age = now - c.timestamp;
+
+                if (age > LINE_LIFESPAN) {
+                    connections.splice(i, 1);
+                } else {
+                    let alpha = 0.4;
+                    if (age > LINE_LIFESPAN - 5000) alpha = (LINE_LIFESPAN - age) / 5000;
+                    
+                    ctx.beginPath();
+                    ctx.moveTo(c.p1.x, c.p1.y);
+                    ctx.lineTo(c.p2.x, c.p2.y);
+                    ctx.strokeStyle = `rgba(200, 230, 255, ${alpha})`;
+                    ctx.lineWidth = 0.8;
+                    ctx.stroke();
+                }
+            }
+
+            // Dibujar Estrellas (con su Halo)
+            stars.forEach(s => { s.update(); s.draw(); });
+            requestAnimationFrame(animate);
+        }
+
+        function handleInteraction(x, y) {
+            // Activar audio en el primer clic si el navegador lo bloqueó
+            if (!audioIniciado) {
+                musica.play().then(() => {
+                    btnAudio.innerText = "SONIDO: ON";
+                    audioIniciado = true;
+                }).catch(e => console.log("Audio blockeado por navegador."));
+            }
+
+            for (let star of stars) {
+                // Mayor radio de detección para facilidad de toque
+                let dist = Math.hypot(star.x - x, star.y - y);
+                if (dist < 25) {
+                    if (selectedStar && selectedStar !== star) {
+                        connections.push({
+                            p1: { x: selectedStar.x, y: selectedStar.y },
+                            p2: { x: star.x, y: star.y },
+                            timestamp: Date.now()
+                        });
+                        selectedStar = null; // Deseleccionar
+                    } else {
+                        selectedStar = star;
+                    }
+                    return;
+                }
+            }
+            selectedStar = null;
+        }
+
+        canvas.addEventListener('mousedown', e => handleInteraction(e.clientX, e.clientY));
+        canvas.addEventListener('touchstart', e => {
+            e.preventDefault();
+            handleInteraction(e.touches[0].clientX, e.touches[0].clientY);
+        }, { passive: false });
+
+        init();
+    </script>
+</body>
+</html>
